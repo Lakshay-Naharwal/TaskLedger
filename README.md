@@ -3,8 +3,7 @@ title: TaskLedger AI
 emoji: 📝
 colorFrom: blue
 colorTo: purple
-sdk: docker
-app_port: 7860
+sdk: gradio
 ---
 
 # TaskLedger AI

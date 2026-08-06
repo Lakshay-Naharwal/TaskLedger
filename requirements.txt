@@ -4,4 +4,4 @@ pydantic
 scikit-learn
 pandas
 sqlalchemy
-tabulate
+tabulategradio

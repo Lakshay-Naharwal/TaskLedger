@@ -4,4 +4,6 @@ pydantic
 scikit-learn
 pandas
 sqlalchemy
-tabulategradio
+psycopg2-binary
+tabulate
+gradio

@@ -21,6 +21,11 @@ export interface TaskLedger {
   completed: Task[];
 }
 
+export interface ReportData {
+  complexity_data: { complexity: number; days_taken: number }[];
+  day_data: { day: string; count: number }[];
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 const taskPath = (taskName: string, action: string) =>
@@ -70,7 +75,7 @@ export const predictDuration = (complexity: number) =>
   });
 
 export const generateReport = (completedTasks: Task[]) =>
-  requestJson<{ image_base64: string }>(`${API_URL}/report`, {
+  requestJson<ReportData>(`${API_URL}/report`, {
     method: 'POST',
     body: JSON.stringify({ completed_tasks: completedTasks }),
   });

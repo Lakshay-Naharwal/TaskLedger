@@ -3,5 +3,5 @@ uvicorn
 pydantic
 scikit-learn
 pandas
-matplotlib
+sqlalchemy
 tabulate

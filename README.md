@@ -1,3 +1,12 @@
+---
+title: TaskLedger AI
+emoji: 📝
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+---
+
 # TaskLedger AI
 
 TaskLedger AI is a Python-first task tracker that uses FastAPI, a small machine
@@ -22,10 +31,10 @@ that calls those API endpoints.
 - FastAPI
 - scikit-learn
 - pandas
-- matplotlib
 - Next.js
 - TypeScript
 - Tailwind CSS
+- Recharts
 
 ## Run Locally
 

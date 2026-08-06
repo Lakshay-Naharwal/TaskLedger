@@ -1,20 +1,20 @@
-import json
 import numpy as np
 from datetime import date
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.exceptions import NotFittedError
+from sqlalchemy.orm import Session
+from api.models import Task
 
 class TaskDurationPredictor:
-    def __init__(self, data_file="tasks.json"):
-        self.data_file = data_file
+    def __init__(self):
         self.model = RandomForestRegressor(n_estimators=100, random_state=42)
         self.is_trained = False
 
-    def _extract_features(self, task_dict):
-        """Extracts features from a task dictionary."""
-        complexity = task_dict.get("complexity", 5)
+    def _extract_features(self, task):
+        """Extracts features from a task."""
+        complexity = task.complexity or 5
         
-        start_date_str = task_dict.get("start_date")
+        start_date_str = task.start_date
         if start_date_str:
             try:
                 start_date = date.fromisoformat(start_date_str)
@@ -26,15 +26,9 @@ class TaskDurationPredictor:
             
         return [complexity, day_of_week]
 
-    def train(self):
+    def train(self, db: Session):
         """Trains the model on completed tasks."""
-        try:
-            with open(self.data_file, "r") as f:
-                data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return False
-
-        completed_tasks = data.get("completed", [])
+        completed_tasks = db.query(Task).filter(Task.end_date != None).all()
         if len(completed_tasks) < 3: # Need at least a few tasks to train
             return False
 
@@ -42,11 +36,10 @@ class TaskDurationPredictor:
         y = []
         for task in completed_tasks:
             # We need a days_taken target
-            days_taken = task.get("days_taken")
-            if days_taken is not None:
+            if task.days_taken is not None:
                 features = self._extract_features(task)
                 X.append(features)
-                y.append(days_taken)
+                y.append(task.days_taken)
 
         if len(X) < 3:
             return False
@@ -72,11 +65,3 @@ class TaskDurationPredictor:
             return max(0, int(round(prediction))) # Can't take negative days
         except NotFittedError:
             return max(1, int(complexity * 0.5))
-
-if __name__ == "__main__":
-    predictor = TaskDurationPredictor()
-    trained = predictor.train()
-    print(f"Model trained: {trained}")
-    
-    pred_days = predictor.predict(complexity=8)
-    print(f"Predicted days for complexity 8: {pred_days}")

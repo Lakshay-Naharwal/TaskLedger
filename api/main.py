@@ -1,38 +1,46 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import date
 from typing import Optional
 import os
 
+from api.database import get_db, engine
+from api import models
 from api.core import TaskManager
 from api.ml_model import TaskDurationPredictor
 from api.analytics import generate_productivity_report
 
+models.Base.metadata.create_all(bind=engine)
+
 app = FastAPI(title="TaskLedger AI API")
 
-# Enable CORS so Vercel can talk to us
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to the Vercel domain
+    allow_origins=[FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize and train the ML model on startup with seed data
-# We look for tasks.json in the parent directory (or current directory if deployed)
-DATA_FILE = os.environ.get("DATA_FILE", "../tasks.json")
-if not os.path.exists(DATA_FILE) and os.path.exists("tasks.json"):
-    DATA_FILE = "tasks.json"
+predictor = TaskDurationPredictor()
 
-predictor = TaskDurationPredictor(data_file=DATA_FILE)
-predictor.train()
+@app.on_event("startup")
+def startup_event():
+    # Attempt to train the model on startup with a fresh DB session
+    db = next(get_db())
+    predictor.train(db)
 
-def get_task_manager():
-    return TaskManager(data_file=DATA_FILE)
+def get_task_manager(db: Session = Depends(get_db)):
+    return TaskManager(db)
 
-# Models
+def background_train_model():
+    db = next(get_db())
+    predictor.train(db)
+
 class PredictRequest(BaseModel):
     complexity: int
     start_date: Optional[str] = None
@@ -50,9 +58,9 @@ class TaskItem(BaseModel):
     start_date: str
     complexity: int
     last_update: str
-    end_date: str
+    end_date: Optional[str] = None
     progress_log: list
-    days_taken: int
+    days_taken: Optional[int] = None
     predicted_days: Optional[int] = None
 
 class ReportRequest(BaseModel):
@@ -63,21 +71,22 @@ def health_check():
     return {"status": "ok", "model_trained": predictor.is_trained}
 
 @app.get("/tasks")
-def list_tasks():
-    manager = get_task_manager()
+def list_tasks(manager: TaskManager = Depends(get_task_manager)):
+    active = [{"name": t.name, "start_date": t.start_date, "complexity": t.complexity, "last_update": t.last_update, "end_date": t.end_date, "progress_log": t.progress_log, "predicted_days": t.predicted_days} for t in manager.get_active_tasks()]
+    completed = [{"name": t.name, "start_date": t.start_date, "complexity": t.complexity, "last_update": t.last_update, "end_date": t.end_date, "progress_log": t.progress_log, "days_taken": t.days_taken, "predicted_days": t.predicted_days} for t in manager.get_completed_tasks()]
+    
     return {
-        "active": [task.to_dict() for task in manager.tasks["active"]],
-        "completed": manager.tasks["completed"],
+        "active": active,
+        "completed": completed,
     }
 
 @app.post("/tasks")
-def add_task(req: AddTaskRequest):
+def add_task(req: AddTaskRequest, manager: TaskManager = Depends(get_task_manager)):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Task name is required")
     if not (1 <= req.complexity <= 10):
         raise HTTPException(status_code=400, detail="Complexity must be between 1 and 10")
 
-    manager = get_task_manager()
     predicted_days = predictor.predict(complexity=req.complexity)
 
     try:
@@ -87,43 +96,41 @@ def add_task(req: AddTaskRequest):
             predicted_days=predicted_days,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc))
 
-    return task.to_dict()
+    return {"name": task.name, "complexity": task.complexity, "predicted_days": task.predicted_days}
 
 @app.post("/tasks/{task_name}/logs")
-def log_task_progress(task_name: str, req: ProgressLogRequest):
+def log_task_progress(task_name: str, req: ProgressLogRequest, manager: TaskManager = Depends(get_task_manager)):
     if not req.note.strip():
         raise HTTPException(status_code=400, detail="Progress note is required")
 
-    manager = get_task_manager()
     try:
         task = manager.log_progress(task_name, req.note.strip(), req.log_date)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=str(exc))
 
-    return task.to_dict()
+    return {"name": task.name, "last_update": task.last_update}
 
 @app.post("/tasks/{task_name}/complete")
-def complete_task(task_name: str):
-    manager = get_task_manager()
+def complete_task(task_name: str, background_tasks: BackgroundTasks, manager: TaskManager = Depends(get_task_manager)):
     try:
         completed_task = manager.complete_task(task_name)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=str(exc))
 
-    predictor.train()
-    return completed_task
+    background_tasks.add_task(background_train_model)
+    
+    return {"name": completed_task.name, "days_taken": completed_task.days_taken}
 
 @app.post("/tasks/{task_name}/reopen")
-def reopen_task(task_name: str):
-    manager = get_task_manager()
+def reopen_task(task_name: str, manager: TaskManager = Depends(get_task_manager)):
     try:
         task = manager.reopen_task(task_name)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=str(exc))
 
-    return task.to_dict()
+    return {"name": task.name}
 
 @app.post("/predict")
 def predict_duration(req: PredictRequest):
@@ -135,10 +142,9 @@ def predict_duration(req: PredictRequest):
         try:
             start_date = date.fromisoformat(req.start_date)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD") from exc
+            raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
 
     days = predictor.predict(complexity=req.complexity, start_date=start_date)
-    
     return {"predicted_days": days}
 
 @app.post("/report")
@@ -147,8 +153,5 @@ def generate_report(req: ReportRequest):
     if len(raw_tasks) == 0:
         raise HTTPException(status_code=400, detail="No completed tasks provided")
         
-    img_base64 = generate_productivity_report(raw_tasks=raw_tasks, return_base64=True)
-    if not img_base64:
-        raise HTTPException(status_code=500, detail="Failed to generate report")
-        
-    return {"image_base64": img_base64}
+    report_data = generate_productivity_report(completed_tasks=raw_tasks)
+    return report_data

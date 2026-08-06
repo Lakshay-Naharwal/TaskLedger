@@ -4,18 +4,20 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from tabulate import tabulate
+import json
 
 from api.analytics import generate_productivity_report
 from api.core import TaskManager
 from api.ml_model import TaskDurationPredictor
-
-DATA_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tasks.json"))
-
+from api.database import engine, get_db
+from api import models
 
 def main():
-    manager = TaskManager(DATA_FILE)
-    predictor = TaskDurationPredictor(DATA_FILE)
-    predictor.train()
+    models.Base.metadata.create_all(bind=engine)
+    db = next(get_db())
+    manager = TaskManager(db)
+    predictor = TaskDurationPredictor()
+    predictor.train(db)
 
     print("-----Welcome to the Task Ledger!-----")
 
@@ -27,7 +29,7 @@ def main():
         print("4. View Active Tasks")
         print("5. View a task's progress log")
         print("6. View Completed Tasks")
-        print("7. Generate Productivity Report")
+        print("7. Generate Productivity Report (JSON)")
         print("8. Exit")
 
         choice = input("Enter your choice: ")
@@ -68,13 +70,13 @@ def main():
                 name = input("Enter task name to complete: ")
                 try:
                     manager.complete_task(name)
-                    predictor.train()
+                    predictor.train(db)
                     print(f"Task '{name}' marked as complete.")
                 except ValueError as exc:
                     print(exc)
 
             case "4":
-                active_tasks = manager.tasks["active"]
+                active_tasks = manager.get_active_tasks()
                 if not active_tasks:
                     print("No active tasks.")
                 else:
@@ -83,7 +85,6 @@ def main():
                             "Name": task.name,
                             "Complexity": task.complexity,
                             "Started on": task.start_date,
-                            "Days Active": task.days_in_progress(),
                             "Last updated": task.last_update,
                             "Predicted days": task.predicted_days,
                         }
@@ -95,7 +96,7 @@ def main():
             case "5":
                 name = input("Enter task name to view progress log: ")
                 task = next(
-                    (task for task in manager.tasks["active"] if task.name.lower() == name.lower()),
+                    (task for task in manager.get_active_tasks() if task.name.lower() == name.lower()),
                     None,
                 )
                 if task is None:
@@ -107,20 +108,39 @@ def main():
                     print(tabulate(task.progress_log, headers="keys", tablefmt="grid"))
 
             case "6":
-                completed_tasks = manager.tasks["completed"]
+                completed_tasks = manager.get_completed_tasks()
                 if not completed_tasks:
                     print("No completed tasks.")
                 else:
+                    table_data = [
+                        {
+                            "Name": task.name,
+                            "Complexity": task.complexity,
+                            "Started on": task.start_date,
+                            "End date": task.end_date,
+                            "Days taken": task.days_taken,
+                            "Predicted days": task.predicted_days,
+                        }
+                        for task in completed_tasks
+                    ]
                     print("\n-----Completed Tasks-----")
-                    print(tabulate(completed_tasks, headers="keys", tablefmt="grid"))
+                    print(tabulate(table_data, headers="keys", tablefmt="grid"))
 
             case "7":
                 print("Generating productivity report...")
-                success = generate_productivity_report(DATA_FILE)
-                if success:
-                    print("Report generated successfully as 'productivity_report.png'")
-                else:
-                    print("Failed to generate report. Not enough completed task data.")
+                completed_tasks = [
+                    {
+                        "name": task.name,
+                        "complexity": task.complexity,
+                        "start_date": task.start_date,
+                        "end_date": task.end_date,
+                        "days_taken": task.days_taken,
+                        "predicted_days": task.predicted_days,
+                    }
+                    for task in manager.get_completed_tasks()
+                ]
+                report = generate_productivity_report(completed_tasks)
+                print(json.dumps(report, indent=2))
 
             case "8":
                 print("Exiting Task Manager. Goodbye!")
@@ -128,7 +148,6 @@ def main():
 
             case _:
                 print("Invalid choice. Please try again.")
-
 
 if __name__ == "__main__":
     main()

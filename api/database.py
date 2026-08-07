@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Support for HuggingFace Spaces persistent storage or local dev fallback
+# Support for persistent storage or local dev fallback
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Use PostgreSQL if DATABASE_URL is provided (e.g. Render/Neon), otherwise fallback to local SQLite

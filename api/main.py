@@ -32,6 +32,74 @@ predictor = TaskDurationPredictor()
 def startup_event():
     # Attempt to train the model on startup with a fresh DB session
     db = next(get_db())
+    
+    # Auto-seed if the database is completely empty (useful for fresh remote deployments)
+    if db.query(models.Task).count() == 0:
+        from datetime import datetime, timedelta
+        import random
+        
+        today = datetime.now()
+        
+        # Seed active tasks
+        active_tasks = [
+            ("Research AI integrations", 7),
+            ("Design new landing page", 5),
+            ("Fix navigation bug", 3),
+            ("Write API documentation", 6),
+            ("Optimize database queries", 8),
+            ("Update dependencies", 2)
+        ]
+        
+        for name, complexity in active_tasks:
+            predicted = predictor.predict(complexity=complexity) if predictor.is_trained else complexity * 2
+            task = models.Task(
+                name=name,
+                complexity=complexity,
+                predicted_days=predicted,
+                start_date=today.strftime('%Y-%m-%d'),
+                last_update=today.strftime('%Y-%m-%d'),
+                progress_log=[{"date": today.strftime('%Y-%m-%d'), "note": "Task initialized via auto-seed."}]
+            )
+            db.add(task)
+            
+        # Seed completed tasks
+        completed_tasks = [
+            ("Setup initial repository", 4),
+            ("Configure CI/CD pipeline", 6),
+            ("Create user personas", 3),
+            ("Draft Q3 roadmap", 5),
+            ("Implement OAuth login", 8)
+        ]
+        
+        for name, complexity in completed_tasks:
+            predicted = predictor.predict(complexity=complexity) if predictor.is_trained else complexity * 2
+            
+            if random.random() < 0.8:
+                days_taken = max(1, predicted + random.randint(-1, 1))
+            else:
+                days_taken = max(1, predicted + random.randint(2, 4))
+                
+            start_date = (today - timedelta(days=days_taken)).strftime('%Y-%m-%d')
+            end_date = today.strftime('%Y-%m-%d')
+            
+            task = models.Task(
+                name=name,
+                complexity=complexity,
+                predicted_days=predicted,
+                start_date=start_date,
+                last_update=end_date,
+                end_date=end_date,
+                days_taken=days_taken,
+                progress_log=[
+                    {"date": start_date, "note": "Started working on task."},
+                    {"date": end_date, "note": "Task completed successfully."}
+                ]
+            )
+            db.add(task)
+            
+        db.commit()
+        print("Auto-seeded database with dummy data!")
+
     predictor.train(db)
 
 def get_task_manager(db: Session = Depends(get_db)):

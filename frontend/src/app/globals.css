@@ -1,12 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;500;600;700&family=Varela+Round&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-background: #0f1115;
-  --color-foreground: #f8fafc;
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-panel: rgba(30, 41, 59, 0.7);
-  --color-panel-border: rgba(255, 255, 255, 0.1);
+  --color-background: #292524; /* Stone 800 */
+  --color-foreground: #F5F5F4; /* Stone 100 */
+  --color-primary: #8B5CF6; /* Violet 500 */
+  --color-primary-hover: #7C3AED; /* Violet 600 */
+  --color-cta: #F97316;
+  --color-cta-hover: #EA580C;
+  --color-panel: rgba(41, 37, 36, 0.85); /* Slightly transparent stone 800 */
+  --color-panel-border: rgba(245, 245, 244, 0.1);
+  --font-sans: 'Nunito Sans', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Varela Round', sans-serif;
 }
 
 :root {
@@ -17,50 +22,64 @@ body {
   color: var(--color-foreground);
   background-color: var(--color-background);
   background-image: 
-    radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.15) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, rgba(14, 165, 233, 0.15) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(124, 58, 237, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(249, 115, 22, 0.05) 0px, transparent 50%);
   background-attachment: fixed;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: var(--font-heading);
 }
 
 .glass-panel {
   background: var(--color-panel);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--color-panel-border);
-  border-radius: 1.25rem;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  border-radius: 1.5rem;
+  box-shadow: 0 10px 40px rgba(124, 58, 237, 0.05), 0 4px 12px rgba(0, 0, 0, 0.03);
 }
 
 .glass-input {
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: white;
+  background: rgba(28, 25, 23, 0.8);
+  border: 1px solid rgba(245, 245, 244, 0.15);
+  color: var(--color-foreground);
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) inset;
 }
 
 .glass-input:focus {
   outline: none;
-  border-color: rgba(59, 130, 246, 0.5);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
 }
 
 .glass-button {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(139, 92, 246, 0.8));
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.2);
+  background: var(--color-primary);
+  border: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+  color: white;
 }
 
 .glass-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(139, 92, 246, 0.3);
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(139, 92, 246, 0.9));
+  box-shadow: 0 8px 20px rgba(124, 58, 237, 0.35);
+  background: var(--color-primary-hover);
 }
 
 .glass-button:active:not(:disabled) {
   transform: translateY(1px);
+}
+
+.cta-button {
+  background: var(--color-cta);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.25);
+}
+
+.cta-button:hover:not(:disabled) {
+  background: var(--color-cta-hover);
+  box-shadow: 0 8px 20px rgba(249, 115, 22, 0.35);
 }

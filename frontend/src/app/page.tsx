@@ -1,26 +1,66 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import {
-  addTask,
-  completeTask,
-  generateReport as generateProductivityReport,
-  getTasks,
-  logProgress,
-  predictDuration,
-  reopenTask,
+  createTaskApi,
   Task,
   ReportData
 } from '../lib/store';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { 
   Plus, CheckCircle2, ListTodo, Activity, RotateCcw, 
-  MessageSquarePlus, BarChart3, Clock, LayoutDashboard
+  MessageSquarePlus, BarChart3, Clock, LayoutDashboard, LogOut
 } from 'lucide-react';
 
-export default function Dashboard() {
+export default function Page() {
+  const { getToken, isSignedIn, isLoaded } = useAuth();
+  const [isGuestMode, setIsGuestMode] = useState(false);
+
+  if (!isLoaded) {
+    return <div className="min-h-screen flex items-center justify-center text-stone-400 font-medium">Loading...</div>;
+  }
+
+  const showDashboard = isSignedIn || isGuestMode;
+
+  if (!showDashboard) {
+    return (
+      <main className="p-4 md:p-8 max-w-7xl mx-auto flex flex-col items-center justify-center min-h-[80vh] text-center animate-in fade-in duration-700">
+        <div className="bg-[var(--color-primary)]/10 p-6 rounded-2xl border border-[var(--color-primary)]/20 shadow-sm mb-6">
+          <LayoutDashboard size={64} className="text-[var(--color-primary)]" />
+        </div>
+        <h1 className="text-6xl font-extrabold tracking-tight text-stone-100 font-heading mb-4">
+          TaskLedger <span className="text-[var(--color-cta)]">AI</span>
+        </h1>
+        <p className="text-xl text-stone-400 font-light max-w-2xl mx-auto mb-10">
+          Manage your tasks and use Machine Learning to predict how long they will take. Sign in to sync your data securely.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4">
+          <SignInButton mode="modal">
+            <button className="cta-button glass-button px-8 py-4 rounded-xl font-bold text-white text-lg min-w-[200px]">
+              Sign In
+            </button>
+          </SignInButton>
+          <button 
+            onClick={() => setIsGuestMode(true)}
+            className="glass-button px-8 py-4 rounded-xl font-bold text-stone-300 hover:text-white text-lg transition-colors border border-white/10 min-w-[200px]"
+          >
+            Try as Guest
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  return <Dashboard getToken={getToken} isGuestMode={isGuestMode} setIsGuestMode={setIsGuestMode} />;
+}
+
+function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, isGuestMode: boolean, setIsGuestMode: any }) {
+  const api = useMemo(() => createTaskApi(getToken, isGuestMode), [getToken, isGuestMode]);
+
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [completedTasks, setCompletedTasks] = useState<Task[]>([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   
   const [newTaskName, setNewTaskName] = useState('');
   const [newTaskComplexity, setNewTaskComplexity] = useState<number>(5);
@@ -34,19 +74,39 @@ export default function Dashboard() {
   const [expandedCompletedTaskId, setExpandedCompletedTaskId] = useState<number | null>(null);
   const [newLogNote, setNewLogNote] = useState('');
 
+  // Add Past Task state
+  const [showAddPastModal, setShowAddPastModal] = useState(false);
+  const [pastTaskName, setPastTaskName] = useState('');
+  const [pastTaskComplexity, setPastTaskComplexity] = useState(5);
+  const [pastTaskStartDate, setPastTaskStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [pastTaskDays, setPastTaskDays] = useState(1);
+  const [isSubmittingPast, setIsSubmittingPast] = useState(false);
+
+  // Onboarding
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
+
   const loadTasks = useCallback(async () => {
+    setIsLoadingTasks(true);
     try {
-      const data = await getTasks();
+      const data = await api.getTasks();
       setActiveTasks(data.active);
       setCompletedTasks(data.completed);
+      
+      if (!isGuestMode && !hasCheckedOnboarding && data.completed.length === 0 && !isLoadingTasks) {
+        setShowOnboarding(true);
+      }
+      setHasCheckedOnboarding(true);
     } catch (err) {
       console.error("Task API failed", err);
+    } finally {
+      setIsLoadingTasks(false);
     }
-  }, []);
+  }, [api, isGuestMode, hasCheckedOnboarding, isLoadingTasks]);
 
   useEffect(() => {
     loadTasks();
-  }, [loadTasks]);
+  }, [api]); // Intentionally simpler dependency array to avoid infinite loops
 
   useEffect(() => {
     setPrediction(null);
@@ -58,7 +118,7 @@ export default function Dashboard() {
     if (!newTaskName.trim()) return;
     setIsPredicting(true);
     try {
-      const data = await predictDuration(newTaskComplexity);
+      const data = await api.predictDuration(newTaskComplexity);
       setPrediction(data.predicted_days);
     } catch (err) {
       console.error("Prediction API failed", err);
@@ -71,7 +131,7 @@ export default function Dashboard() {
     e.preventDefault();
     if (!newTaskName.trim() || isDuplicate || isPredicting) return;
     try {
-      await addTask(newTaskName, newTaskComplexity);
+      await api.addTask(newTaskName, newTaskComplexity);
       await loadTasks();
       setNewTaskName('');
       setNewTaskComplexity(5);
@@ -84,7 +144,7 @@ export default function Dashboard() {
   const handleAddLog = async (index: number) => {
     if (!newLogNote.trim()) return;
     try {
-      await logProgress(activeTasks[index].name, newLogNote.trim());
+      await api.logProgress(activeTasks[index].name, newLogNote.trim());
       await loadTasks();
       setNewLogNote('');
     } catch (err) {
@@ -94,7 +154,7 @@ export default function Dashboard() {
 
   const handleCompleteTask = async (index: number) => {
     try {
-      await completeTask(activeTasks[index].name);
+      await api.completeTask(activeTasks[index].name);
       await loadTasks();
     } catch (err) {
       console.error("Complete task failed", err);
@@ -103,7 +163,7 @@ export default function Dashboard() {
 
   const handleReopen = async (realIndex: number) => {
     try {
-      await reopenTask(completedTasks[realIndex].name);
+      await api.reopenTask(completedTasks[realIndex].name);
       await loadTasks();
     } catch (err) {
       console.error("Reopen task failed", err);
@@ -113,7 +173,7 @@ export default function Dashboard() {
   const generateReport = async () => {
     setIsGeneratingReport(true);
     try {
-      const data = await generateProductivityReport(completedTasks);
+      const data = await api.generateReport(completedTasks);
       setReportData(data);
     } catch (err) {
       console.error("Report API failed", err);
@@ -122,10 +182,46 @@ export default function Dashboard() {
     }
   };
 
+  const handleAddPastTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pastTaskName.trim() || isSubmittingPast) return;
+    setIsSubmittingPast(true);
+    try {
+      await api.addPastTask(pastTaskName, pastTaskComplexity, pastTaskStartDate, pastTaskDays);
+      await loadTasks();
+      setShowAddPastModal(false);
+      setPastTaskName('');
+      setPastTaskComplexity(5);
+      setPastTaskDays(1);
+    } catch (err) {
+      console.error("Add past task failed", err);
+    } finally {
+      setIsSubmittingPast(false);
+    }
+  };
+
   return (
     <main className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
-      <header className="text-center space-y-4 pt-10 pb-6 flex flex-col items-center">
-        <div className="bg-[var(--color-primary)]/10 p-4 rounded-2xl border border-[var(--color-primary)]/20 shadow-sm mb-2">
+      <header className="text-center space-y-4 pt-10 pb-6 flex flex-col items-center relative">
+        <div className="absolute top-0 right-0 flex items-center gap-4">
+          {isGuestMode && (
+            <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">
+              Guest Mode (Local Storage)
+            </span>
+          )}
+          {isGuestMode ? (
+            <button 
+              onClick={() => setIsGuestMode(false)}
+              className="text-stone-400 hover:text-white transition-colors flex items-center gap-2 text-sm font-medium"
+            >
+              <LogOut size={16} /> Exit Guest Mode
+            </button>
+          ) : (
+            <UserButton afterSignOutUrl="/" />
+          )}
+        </div>
+
+        <div className="bg-[var(--color-primary)]/10 p-4 rounded-2xl border border-[var(--color-primary)]/20 shadow-sm mb-2 mt-8 md:mt-0">
           <LayoutDashboard size={40} className="text-[var(--color-primary)]" />
         </div>
         <h1 className="text-5xl font-extrabold tracking-tight text-stone-100 font-heading">
@@ -207,7 +303,12 @@ export default function Dashboard() {
               <span className="ml-auto bg-[var(--color-primary)]/20 text-violet-300 text-xs px-3 py-1 rounded-full font-bold">{activeTasks.length}</span>
             </h2>
             
-            {activeTasks.length === 0 ? (
+            {isLoadingTasks && activeTasks.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-stone-500 opacity-70 py-10 space-y-4">
+                <div className="w-8 h-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin"></div>
+                <p>Loading tasks...</p>
+              </div>
+            ) : activeTasks.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-stone-500 opacity-70 py-10">
                 <CheckCircle2 size={48} className="mb-4 text-emerald-400" />
                 <p>You are all caught up!</p>
@@ -369,12 +470,26 @@ export default function Dashboard() {
 
           {/* Completed Tasks Panel */}
           <section className="glass-panel p-8">
-            <h2 className="text-2xl font-bold mb-6 flex items-center gap-3 text-stone-100 font-heading">
-              <CheckCircle2 className="text-emerald-400" /> Completed
-              <span className="ml-auto bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-xs px-3 py-1 rounded-full">
-                {completedTasks.length}
-              </span>
-            </h2>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold flex items-center gap-3 text-stone-100 font-heading">
+                <CheckCircle2 className="text-emerald-400" /> Completed
+                <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-xs px-3 py-1 rounded-full">
+                  {completedTasks.length}
+                </span>
+              </h2>
+              <button 
+                onClick={() => setShowAddPastModal(true)}
+                className="text-xs font-bold px-4 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors"
+              >
+                + Add Past Task
+              </button>
+            </div>
+            {isLoadingTasks && completedTasks.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-stone-500 opacity-70 py-10 space-y-4">
+                <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                <p>Loading...</p>
+              </div>
+            ) : (
             <ul className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {completedTasks.slice().reverse().map((task, i) => {
                 const realIndex = completedTasks.length - 1 - i;
@@ -444,10 +559,125 @@ export default function Dashboard() {
                 );
               })}
             </ul>
+            )}
           </section>
 
         </div>
       </div>
+
+      {/* Add Past Task Modal */}
+      {showAddPastModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-panel p-8 max-w-md w-full animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-bold mb-4 text-stone-100 font-heading">Add Past Task</h2>
+            <p className="text-stone-400 text-sm mb-6">Enter a task you have already completed so the AI can learn your working speed.</p>
+            
+            <form onSubmit={handleAddPastTask} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-400 mb-1">Task Name</label>
+                <input 
+                  type="text" 
+                  value={pastTaskName}
+                  onChange={e => setPastTaskName(e.target.value)}
+                  className="glass-input w-full p-3 rounded-xl"
+                  placeholder="e.g., Database Migration"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-stone-400 mb-1 flex justify-between">
+                  <span>Complexity</span>
+                  <span className="text-violet-300 font-bold">{pastTaskComplexity}/10</span>
+                </label>
+                <input 
+                  type="range" 
+                  min="1" max="10" 
+                  value={pastTaskComplexity}
+                  onChange={e => setPastTaskComplexity(parseInt(e.target.value))}
+                  className="w-full accent-violet-500 h-2 bg-stone-700 rounded-lg appearance-none cursor-pointer mt-2"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-400 mb-1">Start Date</label>
+                  <input 
+                    type="date" 
+                    value={pastTaskStartDate}
+                    onChange={e => setPastTaskStartDate(e.target.value)}
+                    className="glass-input w-full p-3 rounded-xl text-stone-200"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-400 mb-1">Days Taken</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    value={pastTaskDays}
+                    onChange={e => setPastTaskDays(parseInt(e.target.value))}
+                    className="glass-input w-full p-3 rounded-xl"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-8 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowAddPastModal(false)}
+                  className="glass-button flex-1 py-3 rounded-xl font-medium text-stone-300"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isSubmittingPast || !pastTaskName.trim()}
+                  className="cta-button glass-button flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-50"
+                >
+                  {isSubmittingPast ? 'Adding...' : 'Add Task'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Onboarding Pop-up */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-[var(--color-background)] border border-[var(--color-primary)]/30 shadow-2xl p-8 max-w-lg w-full rounded-2xl animate-in zoom-in-95 duration-300 text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-violet-500 to-fuchsia-500"></div>
+            <div className="bg-violet-500/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 border border-violet-500/20">
+              <BarChart3 size={36} className="text-violet-400" />
+            </div>
+            <h2 className="text-3xl font-extrabold mb-4 text-stone-100 font-heading">Welcome to TaskLedger AI!</h2>
+            <p className="text-stone-300 text-lg mb-8 leading-relaxed">
+              To get the most accurate AI predictions for your future tasks, the model needs to learn your working speed. 
+              <br/><br/>
+              Please add some tasks you've already completed in the past to seed the model.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => {
+                  setShowOnboarding(false);
+                  setShowAddPastModal(true);
+                }}
+                className="cta-button glass-button w-full py-4 rounded-xl font-bold text-white text-lg"
+              >
+                + Add Past Tasks
+              </button>
+              <button 
+                onClick={() => setShowOnboarding(false)}
+                className="text-stone-400 hover:text-stone-200 text-sm py-2 font-medium transition-colors"
+              >
+                Maybe later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

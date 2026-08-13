@@ -100,22 +100,104 @@ def startup_event():
         db.commit()
         print("Auto-seeded database with dummy data!")
 
-    predictor.train(db)
+    # For auto-seeding, we just train the generic "None" model
+    predictor.train(db, user_id=None)
 
-def get_task_manager(db: Session = Depends(get_db)):
-    return TaskManager(db)
+import jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import httpx
+from cryptography.x509 import load_pem_x509_certificate
+from cryptography.hazmat.backends import default_backend
 
-def background_train_model():
+# Authentication setup
+security = HTTPBearer()
+
+CLERK_ISSUER = os.environ.get("CLERK_ISSUER") # e.g. https://clerk.your-domain.com
+
+# Cache for JWKS
+jwks_cache = {}
+
+def get_clerk_public_key(kid: str):
+    if kid in jwks_cache:
+        return jwks_cache[kid]
+    
+    if not CLERK_ISSUER:
+        return None
+        
+    try:
+        jwks_url = f"{CLERK_ISSUER}/.well-known/jwks.json"
+        response = httpx.get(jwks_url)
+        response.raise_for_status()
+        jwks = response.json()
+        
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                # Need to construct PEM from JWK, but PyJWT can decode JWK directly with jwt.algorithms.RSAAlgorithm.from_jwk
+                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
+                jwks_cache[kid] = public_key
+                return public_key
+    except Exception as e:
+        print(f"Error fetching JWKS: {e}")
+    return None
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        unverified_headers = jwt.get_unverified_header(token)
+        kid = unverified_headers.get("kid")
+        if not kid:
+            raise HTTPException(status_code=401, detail="Invalid token headers")
+            
+        public_key = get_clerk_public_key(kid)
+        if not public_key:
+            # Fallback for development if public key fails to fetch but we know it's missing config
+            if not CLERK_ISSUER:
+                print("WARNING: CLERK_ISSUER not set. Bypassing auth for dev.")
+                # Extract user_id without verification (INSECURE - for dev only until keys are set)
+                unverified_claims = jwt.decode(token, options={"verify_signature": False})
+                return unverified_claims.get("sub")
+                
+            raise HTTPException(status_code=401, detail="Unable to resolve public key")
+            
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=CLERK_ISSUER
+        )
+        return payload.get("sub")
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
+
+def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    if not credentials:
+        return None
+    try:
+        return get_current_user(credentials)
+    except HTTPException:
+        return None
+
+def get_task_manager(user_id: str = Depends(get_current_user), db: Session = Depends(get_db)):
+    return TaskManager(db, user_id=user_id)
+
+def background_train_model(user_id: str = None):
     db = next(get_db())
-    predictor.train(db)
+    predictor.train(db, user_id=user_id)
 
 class PredictRequest(BaseModel):
     complexity: int
     start_date: Optional[str] = None
+    guest_completed_tasks: Optional[list] = None
 
 class AddTaskRequest(BaseModel):
     name: str
     complexity: int = 5
+
+class PastTaskRequest(BaseModel):
+    name: str
+    complexity: int
+    start_date: str
+    days_taken: int
 
 class ProgressLogRequest(BaseModel):
     note: str
@@ -155,7 +237,7 @@ def add_task(req: AddTaskRequest, manager: TaskManager = Depends(get_task_manage
     if not (1 <= req.complexity <= 10):
         raise HTTPException(status_code=400, detail="Complexity must be between 1 and 10")
 
-    predicted_days = predictor.predict(complexity=req.complexity)
+    predicted_days = predictor.predict(complexity=req.complexity, user_id=manager.user_id)
 
     try:
         task = manager.add_task(
@@ -167,6 +249,31 @@ def add_task(req: AddTaskRequest, manager: TaskManager = Depends(get_task_manage
         raise HTTPException(status_code=409, detail=str(exc))
 
     return {"name": task.name, "complexity": task.complexity, "predicted_days": task.predicted_days}
+
+@app.post("/tasks/past")
+def add_past_task(req: PastTaskRequest, background_tasks: BackgroundTasks, manager: TaskManager = Depends(get_task_manager)):
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Task name is required")
+    if not (1 <= req.complexity <= 10):
+        raise HTTPException(status_code=400, detail="Complexity must be between 1 and 10")
+    if req.days_taken < 0:
+        raise HTTPException(status_code=400, detail="Days taken cannot be negative")
+
+    predicted_days = predictor.predict(complexity=req.complexity, user_id=manager.user_id)
+
+    try:
+        task = manager.add_past_task(
+            name=req.name.strip(),
+            complexity=req.complexity,
+            start_date=req.start_date,
+            days_taken=req.days_taken,
+            predicted_days=predicted_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    background_tasks.add_task(background_train_model, manager.user_id)
+    return {"name": task.name, "days_taken": task.days_taken}
 
 @app.post("/tasks/{task_name}/logs")
 def log_task_progress(task_name: str, req: ProgressLogRequest, manager: TaskManager = Depends(get_task_manager)):
@@ -187,7 +294,7 @@ def complete_task(task_name: str, background_tasks: BackgroundTasks, manager: Ta
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
-    background_tasks.add_task(background_train_model)
+    background_tasks.add_task(background_train_model, manager.user_id)
     
     return {"name": completed_task.name, "days_taken": completed_task.days_taken}
 
@@ -201,7 +308,7 @@ def reopen_task(task_name: str, manager: TaskManager = Depends(get_task_manager)
     return {"name": task.name}
 
 @app.post("/predict")
-def predict_duration(req: PredictRequest):
+def predict_duration(req: PredictRequest, user_id: str = Depends(get_current_user_optional)):
     if not (1 <= req.complexity <= 10):
         raise HTTPException(status_code=400, detail="Complexity must be between 1 and 10")
 
@@ -212,7 +319,15 @@ def predict_duration(req: PredictRequest):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
 
-    days = predictor.predict(complexity=req.complexity, start_date=start_date)
+    if req.guest_completed_tasks and len(req.guest_completed_tasks) > 0:
+        # Train a temporary model for the guest
+        guest_id = "temp_guest"
+        predictor.train_on_data(req.guest_completed_tasks, user_id=guest_id)
+        days = predictor.predict(complexity=req.complexity, start_date=start_date, user_id=guest_id)
+    else:
+        # Use the authenticated user's model, or fallback to generic (None)
+        days = predictor.predict(complexity=req.complexity, start_date=start_date, user_id=user_id)
+        
     return {"predicted_days": days}
 
 @app.post("/report")

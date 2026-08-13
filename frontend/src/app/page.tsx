@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from "@clerk/nextjs";
+import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import {
   createTaskApi,
   Task,
@@ -79,7 +79,7 @@ function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, i
   const [pastTaskName, setPastTaskName] = useState('');
   const [pastTaskComplexity, setPastTaskComplexity] = useState(5);
   const [pastTaskStartDate, setPastTaskStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [pastTaskDays, setPastTaskDays] = useState(1);
+  const [pastTaskDays, setPastTaskDays] = useState<number | ''>(1);
   const [isSubmittingPast, setIsSubmittingPast] = useState(false);
 
   // Onboarding
@@ -184,10 +184,10 @@ function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, i
 
   const handleAddPastTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pastTaskName.trim() || isSubmittingPast) return;
+    if (!pastTaskName.trim() || isSubmittingPast || pastTaskDays === '') return;
     setIsSubmittingPast(true);
     try {
-      await api.addPastTask(pastTaskName, pastTaskComplexity, pastTaskStartDate, pastTaskDays);
+      await api.addPastTask(pastTaskName, pastTaskComplexity, pastTaskStartDate, Number(pastTaskDays));
       await loadTasks();
       setShowAddPastModal(false);
       setPastTaskName('');
@@ -217,7 +217,7 @@ function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, i
               <LogOut size={16} /> Exit Guest Mode
             </button>
           ) : (
-            <UserButton afterSignOutUrl="/" />
+            <UserButton />
           )}
         </div>
 
@@ -616,7 +616,7 @@ function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, i
                     type="number" 
                     min="0"
                     value={pastTaskDays}
-                    onChange={e => setPastTaskDays(parseInt(e.target.value))}
+                    onChange={e => setPastTaskDays(Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber)}
                     className="glass-input w-full p-3 rounded-xl"
                     required
                   />
@@ -633,7 +633,7 @@ function Dashboard({ getToken, isGuestMode, setIsGuestMode }: { getToken: any, i
                 </button>
                 <button 
                   type="submit" 
-                  disabled={isSubmittingPast || !pastTaskName.trim()}
+                  disabled={isSubmittingPast || !pastTaskName.trim() || pastTaskDays === ''}
                   className="cta-button glass-button flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-50"
                 >
                   {isSubmittingPast ? 'Adding...' : 'Add Task'}
